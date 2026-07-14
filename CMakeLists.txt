@@ -25,9 +25,6 @@ target_sources(
           obs-browser-source.cpp
           obs-browser-source.hpp
           obs-browser-source-audio.cpp
-          soop-source-plugin.h
-          chat-source-plugin.cpp
-          chat-score-source-plugin.cpp
           CommonUtils.h
           browser-app.cpp
           browser-app.hpp
@@ -36,16 +33,19 @@ target_sources(
           browser-scheme.cpp
           browser-scheme.hpp
           browser-version.h
-          commerce-source-plugin.cpp
-          kbo-graphic-source-plugin.cpp
-          football-graphic-source-plugin.cpp
-          videoballoon-source-plugin.cpp
-          mission-source-plugin.cpp
-		      soop-particle-effect-source-plugin.cpp
-          chat-mood-check-source-plugin.cpp
-		  aimanager-source-plugin.cpp
-          painter-source-plugin.cpp
-		      anime-subtitle-source-plugin.cpp
+          source/soop-source-plugin.h
+          source/chat-source-plugin.cpp
+          source/chat-score-source-plugin.cpp
+          source/commerce-source-plugin.cpp
+          source/kbo-graphic-source-plugin.cpp
+          source/football-graphic-source-plugin.cpp
+          source/videoballoon-source-plugin.cpp
+          source/mission-source-plugin.cpp
+		  source/soop-particle-effect-source-plugin.cpp
+          source/chat-mood-check-source-plugin.cpp
+		  source/aimanager-source-plugin.cpp
+          source/painter-source-plugin.cpp
+		  source/anime-subtitle-source-plugin.cpp
           cef-headers.hpp
           deps/base64/base64.cpp
           deps/base64/base64.hpp
