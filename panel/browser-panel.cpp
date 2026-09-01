@@ -908,10 +908,24 @@ QRect QCefOsrWidgetInternal::GetPopupRect()
 
 void QCefOsrWidgetInternal::SetPopupRect(CefRect rect)
 {
+	std::lock_guard<std::mutex> lock(imageMutex);
+
 	popupRect.setX(rect.x);
 	popupRect.setY(rect.y);
 	popupRect.setWidth(rect.width);
 	popupRect.setHeight(rect.height);
+}
+
+void QCefOsrWidgetInternal::SetPopupShow(bool show)
+{
+	{
+		std::lock_guard<std::mutex> lock(imageMutex);
+		popupVisible = show;
+		if (!show)
+			popupLayer = QImage();
+	}
+	QMetaObject::invokeMethod(this, [this] { update(); },
+		Qt::QueuedConnection);
 }
 
 void QCefOsrWidgetInternal::ExecuteOnBrowser(BrowserFunc func, bool async)
@@ -1229,17 +1243,27 @@ void QCefOsrWidgetInternal::paintEvent(QPaintEvent* event)
 {
 	UNUSED_PARAMETER(event);	
 
-	QImage paintImage;
+	QImage viewImage;
+	QImage popupImg;
+	QRect  popupR;
+	bool   showPopup;
 	{
 		std::lock_guard<std::mutex> lock(imageMutex);
-		paintImage = offscreenImage;
+		viewImage = offscreenImage;
+		popupImg = popupLayer;
+		popupR = popupRect;
+		showPopup = popupVisible;
 	}
 
 	{
 		QPainter painter(this);
-		if (!paintImage.isNull())
-		{
-			painter.drawImage(0, 0, paintImage);
+
+		if (!viewImage.isNull())
+			painter.drawImage(0, 0, viewImage);
+
+		if (showPopup && !popupImg.isNull()) {
+			popupImg.setDevicePixelRatio(devicePixelRatioF());
+			painter.drawImage(QPointF(popupR.x(), popupR.y()), popupImg);
 		}
 	}
 }
@@ -1549,21 +1573,10 @@ void QCefOsrWidgetInternal::OnPopupBufferReceive(QImage popup)
 	if (popup.isNull())
 		return;
 
-	std::lock_guard<std::mutex> lock(imageMutex);
-
-	if (offscreenImage.isNull())
-		return;
-
-	popup.setDevicePixelRatio(devicePixelRatioF());
-
-	QPainter painter(&offscreenImage);
-	if (!painter.isActive())
-		return;
-
-	QRect targetRect = popupRect.intersected(offscreenImage.rect());
-	QRect sourceRect = targetRect.translated(-popupRect.topLeft());
-
-	painter.drawImage(targetRect.topLeft(), popup, sourceRect);
+	{
+		std::lock_guard<std::mutex> lock(imageMutex);
+		popupLayer = std::move(popup);
+	}
 	update();
 }
 

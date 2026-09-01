@@ -968,6 +968,7 @@ bool QCefOsrBrowserClient::GetScreenInfo(CefRefPtr<CefBrowser> browser,
 void QCefOsrBrowserClient::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
 {
 	if (widget) {
+		widget->SetPopupShow(show);
 		if (!show) {
 			CefRect rc;
 			rc.Set(0, 0, 0, 0);

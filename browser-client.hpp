@@ -59,7 +59,8 @@ class BrowserClient : public CefClient,
 		      public CefRenderHandler,
 		      public CefAudioHandler,
 		      public CefDownloadHandler,
-		      public CefLoadHandler {
+		      public CefLoadHandler,
+		      public CefJSDialogHandler {
 
 	bool sharing_available = false;
 	bool reroute_audio = true;
@@ -100,6 +101,7 @@ public:
 #endif
 	virtual CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override;
 	virtual CefRefPtr<CefAudioHandler> GetAudioHandler() override;
+	virtual CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override;
 
 	virtual bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 					      CefProcessId source_process,
@@ -208,6 +210,17 @@ public:
 #endif
 	/* CefLoadHandler */
 	virtual void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int httpStatusCode) override;
+
+
+	/* CefJSDialogHandler */
+	virtual bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+		const CefString& origin_url,
+		JSDialogType dialog_type,
+		const CefString& message_text,
+		const CefString& default_prompt_text,
+		CefRefPtr<CefJSDialogCallback> callback,
+		bool& suppress_message) override;
+
 
 	IMPLEMENT_REFCOUNTING(BrowserClient);
 

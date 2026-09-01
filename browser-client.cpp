@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QThread>
 #include <QToolTip>
+#include <QMessageBox>
 #if defined(__APPLE__) && CHROME_VERSION_BUILD > 4430
 #include <IOSurface/IOSurface.h>
 #endif
@@ -94,6 +95,11 @@ CefRefPtr<CefContextMenuHandler> BrowserClient::GetContextMenuHandler()
 CefRefPtr<CefAudioHandler> BrowserClient::GetAudioHandler()
 {
 	return reroute_audio ? this : nullptr;
+}
+
+CefRefPtr<CefJSDialogHandler> BrowserClient::GetJSDialogHandler()
+{
+	return this;
 }
 
 #if CHROME_VERSION_BUILD >= 4638
@@ -913,6 +919,68 @@ void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, 
 		}
 	}
 }
+
+bool BrowserClient::OnJSDialog(CefRefPtr<CefBrowser> browser,
+	const CefString& origin_url,
+	JSDialogType dialog_type,
+	const CefString& message_text,
+	const CefString& default_prompt_text,
+	CefRefPtr<CefJSDialogCallback> callback,
+	bool& suppress_message)
+{
+	if (dialog_type != JSDIALOGTYPE_ALERT &&
+		dialog_type != JSDIALOGTYPE_CONFIRM) {
+		return false;
+	}
+
+	const QString message =
+		QString::fromStdWString(message_text.ToWString());
+
+	OBSDataAutoRelease settings =
+		obs_source_get_settings(bs->source);
+
+	const WId ownerId = static_cast<WId>(
+		obs_data_get_int(settings, "interaction_hwnd"));
+
+	QMetaObject::invokeMethod(
+		qApp,
+		[dialog_type, message, ownerId, callback]() {
+			const bool isConfirm =
+				dialog_type == JSDIALOGTYPE_CONFIRM;
+
+			QWidget* parent =
+				ownerId ? QWidget::find(ownerId) : nullptr;
+
+			auto* messageBox = new QMessageBox(
+				isConfirm ? QMessageBox::Question : QMessageBox::Information,
+				isConfirm ? QStringLiteral("Confirm") : QStringLiteral("Alert"),
+				message,
+				isConfirm ? QMessageBox::Ok | QMessageBox::Cancel : QMessageBox::Ok,
+				parent);
+
+			messageBox->setAttribute(Qt::WA_DeleteOnClose);
+
+			QObject::connect(
+				messageBox,
+				&QMessageBox::finished,
+				messageBox,
+				[messageBox, isConfirm, callback]() {
+					const bool accepted =
+						!isConfirm ||
+						messageBox->standardButton(
+							messageBox->clickedButton()) ==
+						QMessageBox::Ok;
+
+					callback->Continue(accepted, CefString());
+				});
+
+			messageBox->open();
+		},
+		Qt::QueuedConnection);
+
+	return true;
+}
+
 
 bool BrowserClient::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level, const CefString &message,
 				     const CefString &source, int line)

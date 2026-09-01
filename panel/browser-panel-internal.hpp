@@ -120,6 +120,8 @@ public:
 	std::mutex imageMutex;
 	std::atomic<bool> updatePending{false};
 	QImage offscreenImage;
+	QImage popupLayer;
+	bool   popupVisible = false;
 	std::unique_ptr<BrowserEventFilter> m_eventFilter;
 
 #ifdef _WIN32
@@ -172,6 +174,7 @@ public:
 
 	QRect	GetPopupRect();
 	void	SetPopupRect(CefRect rect);
+	void    SetPopupShow(bool show);
 
 signals:
 	void OnMainViewBufferReady(QImage mainView);

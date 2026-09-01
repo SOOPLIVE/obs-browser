@@ -150,6 +150,13 @@ static void browser_source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_bool(settings, "reroute_audio", false);
 }
 
+#pragma region _SOOP_BROWSER_SOURCE_GET_DEFAULTS
+void soop_browser_source_get_defaults(obs_data_t* settings)
+{
+	browser_source_get_defaults(settings);
+}
+#pragma endregion
+
 static bool is_local_file_modified(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
 	bool enabled = obs_data_get_bool(settings, "is_local_file");
@@ -494,9 +501,6 @@ void RegisterBrowserSource()
 	};
 	info.create = [](obs_data_t *settings, obs_source_t *source) -> void * {
 		obs_browser_initialize();
-#pragma region
-		obs_source_set_monitoring_type(source, OBS_MONITORING_TYPE_AUTO);
-#pragma endregion
 		return new BrowserSource(settings, source);
 	};
 	info.destroy = [](void *data) {

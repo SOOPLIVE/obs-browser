@@ -51,6 +51,7 @@ obs_properties_t* chat_mood_check_source_get_properties(void* data)
 	return props;
 }
 
+extern void soop_browser_source_get_defaults(obs_data_t* settings);
 static const char *default_css = "body { \
 					background-color: rgba(0, 0, 0, 0); \
 					margin: 0px auto; \
@@ -58,24 +59,12 @@ static const char *default_css = "body { \
 					}";
 void chat_mood_check_source_get_defaults(obs_data_t *settings)
 {
-	obs_data_set_default_string(settings, "streamer_id", "");
-	obs_data_set_default_string(settings, "broadNum", "0");
-	//
+	soop_browser_source_get_defaults(settings);
+
 	obs_data_set_default_string(settings, "url", "");
-	obs_data_set_default_string(settings, "theme", "default");
 	obs_data_set_default_int(settings, "width", 400);
 	obs_data_set_default_int(settings, "height", 300);
-	obs_data_set_default_int(settings, "fps", 30);
-#ifdef ENABLE_BROWSER_SHARED_TEXTURE
-	obs_data_set_default_bool(settings, "fps_custom", false);
-#else
-	obs_data_set_default_bool(settings, "fps_custom", true);
-#endif
-	obs_data_set_default_bool(settings, "shutdown", false);
-	obs_data_set_default_bool(settings, "restart_when_active", false);
-	obs_data_set_default_int(settings, "webpage_control_level", (int)DEFAULT_CONTROL_LEVEL);
 	obs_data_set_default_string(settings, "css", default_css);
-	obs_data_set_default_bool(settings, "reroute_audio", false);
 }
 
 extern "C" EXPORT void obs_browser_initialize(void);
@@ -96,7 +85,6 @@ void RegisterChatMoodCheckSource()
 	info.create = [](obs_data_t *settings,
 			 obs_source_t *source) -> void * {
 		obs_browser_initialize();
-		obs_source_set_monitoring_type(source, OBS_MONITORING_TYPE_AUTO);
 		return new BrowserSource(settings, source);
 	};
 	info.destroy = [](void *data) {
