@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QThread>
 #include <QToolTip>
+#include <QMessageBox>
 #if defined(__APPLE__) && CHROME_VERSION_BUILD > 4430
 #include <IOSurface/IOSurface.h>
 #endif
@@ -36,6 +37,31 @@
 #include "drm-format.hpp"
 #endif
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+bool MessageHandler::OnQuery(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int64_t,
+			     const CefString &request, bool,
+			     CefRefPtr<Callback> callback)
+{   
+	QString strData = QString::fromStdWString(request);
+	std::string dataUtf8 = strData.toUtf8().constData();
+
+	int ret = -999; // [ERR] Callback Object is wrong!
+	if (eventCallback_) {
+		std::string result;
+		ret = eventCallback_->CefQuery(dataUtf8, result);
+		if (0 == ret) {
+			callback->Success(result);
+			//TRACELOG(LEVEL_LOG, _T("ProcessSharingPopupQuery Success!"));
+			return true;
+		}
+	}
+
+	callback->Failure(ret, "Failed to Send Data");
+
+	return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 inline bool BrowserClient::valid() const
 {
 	return !!bs && !bs->destroying;
@@ -71,6 +97,11 @@ CefRefPtr<CefAudioHandler> BrowserClient::GetAudioHandler()
 	return reroute_audio ? this : nullptr;
 }
 
+CefRefPtr<CefJSDialogHandler> BrowserClient::GetJSDialogHandler()
+{
+	return this;
+}
+
 #if CHROME_VERSION_BUILD >= 4638
 CefRefPtr<CefRequestHandler> BrowserClient::GetRequestHandler()
 {
@@ -89,7 +120,8 @@ CefRefPtr<CefResourceRequestHandler> BrowserClient::GetResourceRequestHandler(Ce
 	return nullptr;
 }
 
-void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus
+void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+					      TerminationStatus
 #if CHROME_VERSION_BUILD >= 6367
 					      ,
 					      int, const CefString &error_string
@@ -112,6 +144,10 @@ void BrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>, Termination
 
 	blog(LOG_ERROR, "[obs-browser: '%s'] Webpage has crashed unexpectedly! Reason: '%s'", sourceName,
 	     str_text.c_str());
+
+	if (message_router_) {
+		message_router_->OnRenderProcessTerminated(browser);
+	}
 }
 
 CefResourceRequestHandler::ReturnValue BrowserClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
@@ -122,35 +158,120 @@ CefResourceRequestHandler::ReturnValue BrowserClient::OnBeforeResourceLoad(CefRe
 }
 #endif
 
-bool BrowserClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+bool BrowserClient::OnBeforePopup(
+	CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 #if CHROME_VERSION_BUILD >= 6834
-				  int,
+	int popup_id,
 #endif
-				  const CefString &, const CefString &, cef_window_open_disposition_t, bool,
-				  const CefPopupFeatures &, CefWindowInfo &, CefRefPtr<CefClient> &,
-				  CefBrowserSettings &, CefRefPtr<CefDictionaryValue> &, bool *)
+	const CefString &target_url, const CefString &target_frame_name,
+	cef_window_open_disposition_t target_disposition, bool user_gesture,
+	const CefPopupFeatures &popupFeatures, CefWindowInfo &windowInfo,
+	CefRefPtr<CefClient> &client, CefBrowserSettings &settings,
+	CefRefPtr<CefDictionaryValue> &extra_info, bool *no_javascript_access)
 {
+	if (!target_url.empty() && user_gesture) {
+		std::wstring url = target_url.ToWString();
+    	ShellExecuteW(NULL, L"open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
+	}
 	/* block popups */
 	return true;
 }
 
-void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams>,
+bool BrowserClient::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+				   CefRefPtr<CefFrame> frame,
+				   CefRefPtr<CefRequest> request,
+				   bool user_gesture, bool is_redirect)
+{
+    
+    UNUSED_PARAMETER(request);
+    UNUSED_PARAMETER(is_redirect);
+    UNUSED_PARAMETER(user_gesture);
+    
+	if (message_router_) {
+		message_router_->OnBeforeBrowse(browser, frame);
+	}
+	return false;
+}
+
+bool BrowserClient::OnBeforeDownload(
+	CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> download_item,
+	const CefString &suggested_name,
+	CefRefPtr<CefBeforeDownloadCallback> callback)
+{
+	callback->Continue(suggested_name, true);
+
+	return false;
+}
+
+void BrowserClient::OnAfterCreated(CefRefPtr<CefBrowser> browser)
+{
+    
+    UNUSED_PARAMETER(browser);
+    
+	//CefCurrentlyOn(TID_UI);
+	if (!message_router_) {
+		// Create the browser-side router for query handling.
+		CefMessageRouterConfig config;
+		message_router_ = CefMessageRouterBrowserSide::Create(config);
+
+		// Register handlers with the router.
+		message_handler_.reset(new MessageHandler(bs));
+		message_router_->AddHandler(message_handler_.get(), false);
+	}
+
+#ifdef _WIN32
+	/*if (browser && browser->GetHost()) {
+		CefWindowInfo wndDevTool;
+		wndDevTool.SetAsPopup(browser->GetHost()->GetWindowHandle(),
+				      "DevTools");
+		wndDevTool.bounds.width = 300;
+		wndDevTool.bounds.height = 500;
+		CefBrowserSettings settings2;
+		browser->GetHost()->ShowDevTools(wndDevTool, nullptr, settings2,
+						 CefPoint(0, 0));
+	}*/
+#endif
+}
+
+void BrowserClient::OnBeforeClose(CefRefPtr<CefBrowser> browser)
+{
+    UNUSED_PARAMETER(browser);
+    
+	if (message_router_) {
+		// Free the router when the last browser is closed.
+		message_router_->RemoveHandler(message_handler_.get());
+		message_handler_.reset();
+		message_router_ = nullptr;
+	}
+}
+
+void BrowserClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>,
+					CefRefPtr<CefFrame>,
+					CefRefPtr<CefContextMenuParams>,
 					CefRefPtr<CefMenuModel> model)
 {
 	/* remove all context menu contributions */
 	model->Clear();
 }
 
-bool BrowserClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, CefProcessId,
+bool BrowserClient::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+					     CefRefPtr<CefFrame> frame,
+					     CefProcessId source_process,
 					     CefRefPtr<CefProcessMessage> message)
 {
-	const std::string &name = message->GetName();
-	CefRefPtr<CefListValue> input_args = message->GetArgumentList();
-	nlohmann::json json;
 
 	if (!valid()) {
 		return false;
 	}
+
+	const std::string &name = message->GetName();
+	if ("cefQueryMsg" == name) {
+		//CefCurrentlyOn(TID_UI);
+		return message_router_->OnProcessMessageReceived(browser, frame, source_process, message);
+	}
+
+	CefRefPtr<CefListValue> input_args = message->GetArgumentList();
+	nlohmann::json json;
 
 	// Fall-through switch, so that higher levels also have lower-level rights
 	switch (webpage_control_level) {
@@ -303,13 +424,27 @@ bool BrowserClient::OnTooltip(CefRefPtr<CefBrowser>, CefString &text)
 	return true;
 }
 
-void BrowserClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList &, const void *buffer,
+void BrowserClient::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
+{
+	bs->is_showing_popup = show;
+
+	if (!show) {
+		bs->DestroyPopupTextures();
+		browser->GetHost()->Invalidate(PET_VIEW);
+	}
+}
+void BrowserClient::OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect)
+{
+	bs->popup_rect = rect;
+}
+
+void BrowserClient::OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList &, const void *buffer,
 			    int width, int height)
 {
-	if (type != PET_VIEW) {
-		// TODO Overlay texture on top of bs->texture
-		return;
-	}
+	//if (type != PET_VIEW) {
+	//	// TODO Overlay texture on top of bs->texture
+	//	return;
+	//}
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 	if (sharing_available) {
@@ -321,22 +456,49 @@ void BrowserClient::OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const 
 		return;
 	}
 
-	if (bs->width != width || bs->height != height) {
-		obs_enter_graphics();
-		bs->DestroyTextures();
-		obs_leave_graphics();
-	}
+	if (type == PET_VIEW) {
+		if (bs->width != width || bs->height != height) {
+			obs_enter_graphics();
+			bs->DestroyTextures();
+			obs_leave_graphics();
+		}
 
-	if (!bs->texture && width && height) {
-		obs_enter_graphics();
-		bs->texture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t **)&buffer, GS_DYNAMIC);
-		bs->width = width;
-		bs->height = height;
-		obs_leave_graphics();
-	} else {
-		obs_enter_graphics();
-		gs_texture_set_image(bs->texture, (const uint8_t *)buffer, width * 4, false);
-		obs_leave_graphics();
+		if (!bs->texture && width && height) {
+			obs_enter_graphics();
+			bs->texture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&buffer, GS_DYNAMIC);
+			bs->width = width;
+			bs->height = height;
+			obs_leave_graphics();
+		}
+		else {
+			obs_enter_graphics();
+			gs_texture_set_image(bs->texture, (const uint8_t*)buffer, width * 4, false);
+			obs_leave_graphics();
+		}
+
+		if(bs->is_showing_popup)
+			browser->GetHost()->Invalidate(PET_POPUP);
+
+	} // PET_POPUP
+	else {
+		if (bs->popup_width != width || bs->popup_height != height) {
+			obs_enter_graphics();
+			bs->DestroyPopupTextures();
+			obs_leave_graphics();
+		}
+
+		if (!bs->popup_texture && width && height) {
+			obs_enter_graphics();
+			bs->popup_texture = gs_texture_create(width, height, GS_BGRA, 1, (const uint8_t**)&buffer, GS_DYNAMIC);
+			bs->popup_width = width;
+			bs->popup_height = height;
+			obs_leave_graphics();
+		}
+		else {
+			obs_enter_graphics();
+			gs_texture_set_image(bs->popup_texture, (const uint8_t*)buffer, width * 4, false);
+			obs_leave_graphics();
+		}
 	}
 }
 
@@ -371,6 +533,38 @@ void BrowserClient::UpdateExtraTexture()
 	}
 }
 
+
+void BrowserClient::UpdatePopupExtraTexture()
+{
+	if (bs->popup_texture) {
+		const uint32_t cx = gs_texture_get_width(bs->popup_texture);
+		const uint32_t cy = gs_texture_get_height(bs->popup_texture);
+		const gs_color_format format = gs_texture_get_color_format(bs->popup_texture);
+		const gs_color_format linear_format = gs_generalize_format(format);
+
+		if (linear_format != format) {
+			if (!bs->popup_extra_texture || bs->popup_last_format != linear_format
+				|| bs->popup_last_cx != cx || bs->popup_last_cy != cy) {
+				if (bs->popup_extra_texture) {
+					gs_texture_destroy(bs->popup_extra_texture);
+					bs->popup_extra_texture = nullptr;
+				}
+				bs->popup_extra_texture = gs_texture_create(cx, cy, linear_format, 1, nullptr, 0);
+				bs->popup_last_cx = cx;
+				bs->popup_last_cy = cy;
+				bs->popup_last_format = linear_format;
+			}
+		}
+		else if (bs->popup_extra_texture) {
+			gs_texture_destroy(bs->popup_extra_texture);
+			bs->popup_extra_texture = nullptr;
+			bs->popup_last_cx = 0;
+			bs->popup_last_cy = 0;
+			bs->popup_last_format = GS_UNKNOWN;
+		}
+	}
+}
+
 void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList &,
 #if CHROME_VERSION_BUILD >= 6367
 				       const CefAcceleratedPaintInfo &info)
@@ -378,12 +572,16 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 				       void *shared_handle)
 #endif
 {
-	if (type != PET_VIEW) {
-		// TODO Overlay texture on top of bs->texture
+	//if (type != PET_VIEW) {
+	//	// TODO Overlay texture on top of bs->texture
+	//	return;
+	//}
+
+	if (!valid()) {
 		return;
 	}
 
-	if (!valid()) {
+	if (type == PET_POPUP && !bs->is_showing_popup) {
 		return;
 	}
 
@@ -425,12 +623,15 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 
 	obs_enter_graphics();
 
-	if (bs->texture) {
+	gs_texture_t*& target_texture =
+		type == PET_VIEW ? bs->texture : bs->popup_texture;
+
+	if (target_texture) {
 #ifdef _WIN32
 		//gs_texture_release_sync(bs->texture, 0);
 #endif
-		gs_texture_destroy(bs->texture);
-		bs->texture = nullptr;
+		gs_texture_destroy(target_texture);
+		target_texture = nullptr;
 	}
 
 #if defined(__APPLE__) && CHROME_VERSION_BUILD > 6367
@@ -438,12 +639,13 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 #elif defined(__APPLE__) && CHROME_VERSION_BUILD > 4183
 	bs->texture = gs_texture_create_from_iosurface((IOSurfaceRef)(uintptr_t)shared_handle);
 #elif defined(_WIN32) && CHROME_VERSION_BUILD > 4183
-	bs->texture =
+	target_texture =
 #if CHROME_VERSION_BUILD >= 6367
-		gs_texture_open_nt_shared((uint32_t)(uintptr_t)info.shared_texture_handle);
+			gs_texture_open_nt_shared((uint32_t)(uintptr_t)info.shared_texture_handle);
 #else
-		gs_texture_open_nt_shared((uint32_t)(uintptr_t)shared_handle);
+			gs_texture_open_nt_shared((uint32_t)(uintptr_t)shared_handle);
 #endif
+
 	//if (bs->texture)
 	//	gs_texture_acquire_sync(bs->texture, 1, INFINITE);
 
@@ -454,13 +656,20 @@ void BrowserClient::OnAcceleratedPaint(CefRefPtr<CefBrowser>, PaintElementType t
 						    format.drm_format, format.gs_format, info.plane_count, fds, strides,
 						    offsets, modifier != DRM_FORMAT_MOD_INVALID ? modifiers : NULL);
 #endif
-	UpdateExtraTexture();
+	if(type == PET_VIEW)
+		UpdateExtraTexture();
+	else
+		UpdatePopupExtraTexture();
+
 	obs_leave_graphics();
 
 #if defined(__APPLE__) && CHROME_VERSION_BUILD >= 6367
 	bs->last_handle = info.shared_texture_io_surface;
 #elif defined(_WIN32) && CHROME_VERSION_BUILD >= 6367
-	bs->last_handle = info.shared_texture_handle;
+	if(type == PET_VIEW)
+		bs->last_handle = info.shared_texture_handle;
+	else
+		bs->popup_last_handle = info.shared_texture_handle;
 #elif defined(__APPLE__) || defined(_WIN32)
 	bs->last_handle = shared_handle;
 #endif
@@ -689,19 +898,89 @@ void BrowserClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, 
 		return;
 	}
 
-	if (frame->IsMain() && bs->css.length()) {
-		std::string uriEncodedCSS = CefURIEncode(bs->css, false).ToString();
+	if (frame->IsMain()) {
+		if(bs->css.length()) {
+			std::string uriEncodedCSS =
+				CefURIEncode(bs->css, false).ToString();
 
-		std::string script;
-		script += "const obsCSS = document.createElement('style');";
-		script += "obsCSS.appendChild(document.createTextNode("
-			  "decodeURIComponent(\"" +
-			  uriEncodedCSS + "\")));";
-		script += "document.querySelector('head').appendChild(obsCSS);";
+			std::string script;
+			script +=
+				"const obsCSS = document.createElement('style');";
+			script += "obsCSS.innerHTML = decodeURIComponent(\"" +
+				  uriEncodedCSS + "\");";
+			script +=
+				"document.querySelector('head').appendChild(obsCSS);";
 
-		frame->ExecuteJavaScript(script, "", 0);
+			frame->ExecuteJavaScript(script, "", 0);
+		}
+		if (!bs->script.empty()) {
+			std::string url = frame->GetURL();
+			frame->ExecuteJavaScript(bs->script, url, 0);
+		}
 	}
 }
+
+bool BrowserClient::OnJSDialog(CefRefPtr<CefBrowser> browser,
+	const CefString& origin_url,
+	JSDialogType dialog_type,
+	const CefString& message_text,
+	const CefString& default_prompt_text,
+	CefRefPtr<CefJSDialogCallback> callback,
+	bool& suppress_message)
+{
+	if (dialog_type != JSDIALOGTYPE_ALERT &&
+		dialog_type != JSDIALOGTYPE_CONFIRM) {
+		return false;
+	}
+
+	const QString message =
+		QString::fromStdWString(message_text.ToWString());
+
+	OBSDataAutoRelease settings =
+		obs_source_get_settings(bs->source);
+
+	const WId ownerId = static_cast<WId>(
+		obs_data_get_int(settings, "interaction_hwnd"));
+
+	QMetaObject::invokeMethod(
+		qApp,
+		[dialog_type, message, ownerId, callback]() {
+			const bool isConfirm =
+				dialog_type == JSDIALOGTYPE_CONFIRM;
+
+			QWidget* parent =
+				ownerId ? QWidget::find(ownerId) : nullptr;
+
+			auto* messageBox = new QMessageBox(
+				isConfirm ? QMessageBox::Question : QMessageBox::Information,
+				isConfirm ? QStringLiteral("Confirm") : QStringLiteral("Alert"),
+				message,
+				isConfirm ? QMessageBox::Ok | QMessageBox::Cancel : QMessageBox::Ok,
+				parent);
+
+			messageBox->setAttribute(Qt::WA_DeleteOnClose);
+
+			QObject::connect(
+				messageBox,
+				&QMessageBox::finished,
+				messageBox,
+				[messageBox, isConfirm, callback]() {
+					const bool accepted =
+						!isConfirm ||
+						messageBox->standardButton(
+							messageBox->clickedButton()) ==
+						QMessageBox::Ok;
+
+					callback->Continue(accepted, CefString());
+				});
+
+			messageBox->open();
+		},
+		Qt::QueuedConnection);
+
+	return true;
+}
+
 
 bool BrowserClient::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t level, const CefString &message,
 				     const CefString &source, int line)
@@ -729,4 +1008,17 @@ bool BrowserClient::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t l
 	blog(errorLevel, "[obs-browser: '%s'] %s: %s (%s:%d)", sourceName, code, message.ToString().c_str(),
 	     source.ToString().c_str(), line);
 	return false;
+}
+
+bool BrowserClient::_ParseOBSEvent(CefRefPtr<CefBrowser> browser,
+				   CefRefPtr<CefProcessMessage> message)
+{
+    UNUSED_PARAMETER(browser);
+    
+	const std::string &name = message->GetName();
+	CefRefPtr<CefListValue> input_args = message->GetArgumentList();
+	nlohmann::json json;
+
+
+	return true;
 }

@@ -107,7 +107,9 @@ std::vector<std::string> exposedFunctions = {"getControlLevel",     "getCurrentS
 					     "setCurrentScene",     "getTransitions",   "getCurrentTransition",
 					     "setCurrentTransition"};
 
-void BrowserApp::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, CefRefPtr<CefV8Context> context)
+void BrowserApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
+				  CefRefPtr<CefFrame> frame,
+				  CefRefPtr<CefV8Context> context)
 {
 	CefRefPtr<CefV8Value> globalObj = context->GetGlobal();
 
@@ -130,6 +132,18 @@ void BrowserApp::OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFr
 #else
 	UNUSED_PARAMETER(browser);
 #endif
+	if (message_router_) {
+		message_router_->OnContextCreated(browser, frame, context);
+	}
+}
+
+void BrowserApp::OnContextReleased(CefRefPtr<CefBrowser> browser,
+				   CefRefPtr<CefFrame> frame,
+				   CefRefPtr<CefV8Context> context)
+{
+	if (message_router_) {
+		message_router_->OnContextReleased(browser, frame, context);
+	}
 }
 
 void BrowserApp::ExecuteJSFunction(CefRefPtr<CefBrowser> browser, const char *functionName, CefV8ValueList arguments)
@@ -380,6 +394,9 @@ bool BrowserApp::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefP
 
 		callbackMap.erase(callbackID);
 
+	} else if (message_router_) {
+		// add OnProcessMessageReceived event
+		return message_router_->OnProcessMessageReceived(browser, frame, source_process, message);
 	} else {
 		return false;
 	}
@@ -435,6 +452,14 @@ bool BrowserApp::Execute(const CefString &name, CefRefPtr<CefV8Value>, const Cef
 
 	return true;
 }
+
+void BrowserApp::OnWebKitInitialized()
+{
+	// Create the renderer-side router for query handling.
+	CefMessageRouterConfig config;
+	message_router_ = CefMessageRouterRendererSide::Create(config);
+}
+
 
 #ifdef ENABLE_BROWSER_QT_LOOP
 Q_DECLARE_METATYPE(MessageTask);

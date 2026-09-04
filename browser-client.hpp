@@ -23,6 +23,29 @@
 #include "cef-headers.hpp"
 #include "obs-browser-source.hpp"
 
+#include "include/wrapper/cef_message_router.h"
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+class MessageHandler : public CefMessageRouterBrowserSide::Handler {
+public:
+	explicit MessageHandler(IMessageHandler* eventCallback)
+		: eventCallback_(eventCallback)
+	{
+	}
+	~ MessageHandler() {
+		eventCallback_ = nullptr;
+	}
+
+	// Called due to cefQuery execution in html.
+	bool OnQuery(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+		     int64_t query_id, const CefString &request, bool persistent,
+		     CefRefPtr<Callback> callback) override;
+
+private:
+	IMessageHandler*	eventCallback_ = nullptr;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 struct BrowserSource;
 
 class BrowserClient : public CefClient,
@@ -35,7 +58,9 @@ class BrowserClient : public CefClient,
 		      public CefContextMenuHandler,
 		      public CefRenderHandler,
 		      public CefAudioHandler,
-		      public CefLoadHandler {
+		      public CefDownloadHandler,
+		      public CefLoadHandler,
+		      public CefJSDialogHandler {
 
 	bool sharing_available = false;
 	bool reroute_audio = true;
@@ -44,6 +69,7 @@ class BrowserClient : public CefClient,
 	inline bool valid() const;
 
 	void UpdateExtraTexture();
+	void UpdatePopupExtraTexture();
 
 public:
 	BrowserSource *bs;
@@ -75,6 +101,7 @@ public:
 #endif
 	virtual CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override;
 	virtual CefRefPtr<CefAudioHandler> GetAudioHandler() override;
+	virtual CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override;
 
 	virtual bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 					      CefProcessId source_process,
@@ -90,11 +117,31 @@ public:
 #if CHROME_VERSION_BUILD >= 6834
 				   int popup_id,
 #endif
-				   const CefString &target_url, const CefString &target_frame_name,
-				   cef_window_open_disposition_t target_disposition, bool user_gesture,
-				   const CefPopupFeatures &popupFeatures, CefWindowInfo &windowInfo,
-				   CefRefPtr<CefClient> &client, CefBrowserSettings &settings,
-				   CefRefPtr<CefDictionaryValue> &extra_info, bool *no_javascript_access) override;
+		      const CefString &target_url, const CefString &target_frame_name,
+		      cef_window_open_disposition_t target_disposition, bool user_gesture,
+			  const CefPopupFeatures &popupFeatures, CefWindowInfo &windowInfo,
+			  CefRefPtr<CefClient> &client, CefBrowserSettings &settings,
+		      CefRefPtr<CefDictionaryValue> &extra_info, bool *no_javascript_access) override;
+
+	virtual bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+				    CefRefPtr<CefFrame> frame,
+				    CefRefPtr<CefRequest> request,
+				    bool user_gesture, bool is_redirect) override;
+
+	virtual CefRefPtr<CefDownloadHandler> GetDownloadHandler() override
+	{
+		return this;
+	}
+
+	virtual bool OnBeforeDownload(
+		CefRefPtr<CefBrowser> browser,
+		CefRefPtr<CefDownloadItem> download_item,
+		const CefString &suggested_name,
+		CefRefPtr<CefBeforeDownloadCallback> callback) override;
+
+	virtual void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+	virtual void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+
 #if CHROME_VERSION_BUILD >= 4638
 	/* CefRequestHandler */
 	virtual CefRefPtr<CefResourceRequestHandler>
@@ -122,8 +169,11 @@ public:
 
 	/* CefRenderHandler */
 	virtual void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect &rect) override;
+	virtual void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
+	virtual void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override;
 	virtual void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList &dirtyRects,
 			     const void *buffer, int width, int height) override;
+
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 	virtual void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
 					const RectList &dirtyRects,
@@ -161,5 +211,25 @@ public:
 	/* CefLoadHandler */
 	virtual void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int httpStatusCode) override;
 
+
+	/* CefJSDialogHandler */
+	virtual bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+		const CefString& origin_url,
+		JSDialogType dialog_type,
+		const CefString& message_text,
+		const CefString& default_prompt_text,
+		CefRefPtr<CefJSDialogCallback> callback,
+		bool& suppress_message) override;
+
+
 	IMPLEMENT_REFCOUNTING(BrowserClient);
+
+private:
+	bool _ParseOBSEvent(CefRefPtr<CefBrowser> browser,
+			    CefRefPtr<CefProcessMessage> message);
+
+private:
+	// Handle the browser side of query routing
+	CefRefPtr<CefMessageRouterBrowserSide> message_router_;
+	std::unique_ptr<CefMessageRouterBrowserSide::Handler> message_handler_;
 };

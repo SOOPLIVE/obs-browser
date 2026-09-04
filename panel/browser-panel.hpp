@@ -8,6 +8,8 @@
 #include <functional>
 #include <string>
 
+#include "QCefQuery.hpp"
+
 #if defined(__APPLE__)
 #include <dlfcn.h>
 #endif
@@ -19,13 +21,23 @@
 struct QCefCookieManager {
 	virtual ~QCefCookieManager() {}
 
-	virtual bool DeleteCookies(const std::string &url, const std::string &name) = 0;
-	virtual bool SetStoragePath(const std::string &storage_path, bool persist_session_cookies = false) = 0;
+	virtual void SetCookies(const std::string& url,
+				const std::string& cookie) = 0;
+
+	virtual bool DeleteCookies(const std::string &url,
+				   const std::string &name) = 0;
+	virtual bool SetStoragePath(const std::string &storage_path,
+				    bool persist_session_cookies = false) = 0;
 	virtual bool FlushStore() = 0;
 
 	typedef std::function<void(bool)> cookie_exists_cb;
 
-	virtual void CheckForCookie(const std::string &site, const std::string &cookie, cookie_exists_cb callback) = 0;
+	virtual void CheckForCookie(const std::string &site,
+				    const std::string &cookie,
+				    cookie_exists_cb callback) = 0;
+
+	virtual bool SetCookie(const std::string &url, const std::string &name,
+			       const std::string &value) = 0;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -37,17 +49,36 @@ protected:
 	inline QCefWidget(QWidget *parent) : QWidget(parent) {}
 
 public:
-	virtual void setURL(const std::string &url) = 0;
+	virtual void setURL(const std::string &url, unsigned background_color_alpha = 255) = 0;
 	virtual void setStartupScript(const std::string &script) = 0;
 	virtual void allowAllPopups(bool allow) = 0;
 	virtual void closeBrowser() = 0;
 	virtual void reloadPage() = 0;
 	virtual bool zoomPage(int direction) = 0;
 	virtual void executeJavaScript(const std::string &script) = 0;
+	virtual void searchText(std::string& text, bool matchCase, bool forward, bool findNext) = 0;
+	virtual void stopSearchtext(bool clearSelection) = 0;
+#ifdef _WIN32
+	virtual void SetIME(bool show) = 0;
+#endif
+
+	//somsool Soop Login Alert
+	bool m_SoopLogin = false;
+	bool m_LinkSns = false;
+	int  m_cefPopupType = 0;
 
 signals:
 	void titleChanged(const QString &title);
 	void urlChanged(const QString &url);
+
+	//somsool Soop Login Alert
+	void cefMessageBoxMessage(const QString &msg);
+	//
+	void cefQueryRequest(const QCefQuery &query);
+	void cefCreateAfter();
+	void cefLoadEnd();
+	void cefBeforePopup(const QString &url);
+
 };
 
 /* ------------------------------------------------------------------------- */
@@ -59,8 +90,9 @@ struct QCef {
 	virtual bool initialized(void) = 0;
 	virtual bool wait_for_browser_init(void) = 0;
 
-	virtual QCefWidget *create_widget(QWidget *parent, const std::string &url,
-					  QCefCookieManager *cookie_manager = nullptr) = 0;
+	virtual QCefWidget * create_widget(QWidget *parent, const std::string &url,
+				      				   QCefCookieManager *cookie_manager = nullptr,
+									   const std::string &headers = "", bool dummy = true) = 0;
 
 	virtual QCefCookieManager *create_cookie_manager(const std::string &storage_path,
 							 bool persist_session_cookies = false) = 0;

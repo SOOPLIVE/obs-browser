@@ -3,11 +3,16 @@
 #include "cef-headers.hpp"
 #include "browser-panel-internal.hpp"
 
+#include "include/wrapper/cef_message_router.h"
+#include "include/cef_request_handler.h"
+
 #include <string>
+
 
 class QCefBrowserClient : public CefClient,
 			  public CefDisplayHandler,
 			  public CefRequestHandler,
+			  public CefResourceRequestHandler,
 			  public CefLifeSpanHandler,
 			  public CefContextMenuHandler,
 			  public CefLoadHandler,
@@ -16,14 +21,23 @@ class QCefBrowserClient : public CefClient,
 			  public CefJSDialogHandler {
 
 public:
-	inline QCefBrowserClient(QCefWidgetInternal *widget_, const std::string &script_, bool allowAllPopups_)
+	inline QCefBrowserClient(QCefWidgetInternal *widget_,
+						     const std::string &headers_,
+			 				 const std::string &script_,
+							 bool allowAllPopups_)
 		: widget(widget_),
+		  headers(headers_),
 		  script(script_),
 		  allowAllPopups(allowAllPopups_)
 	{
 	}
 
 	/* CefClient */
+	virtual CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+		CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+		CefRefPtr<CefRequest> request, bool is_navigation,
+		bool is_download, const CefString &request_initiator,
+		bool &disable_default_handling) override;
 	virtual CefRefPtr<CefLoadHandler> GetLoadHandler() override;
 	virtual CefRefPtr<CefDisplayHandler> GetDisplayHandler() override;
 	virtual CefRefPtr<CefRequestHandler> GetRequestHandler() override;
@@ -36,12 +50,29 @@ public:
 	/* CefDisplayHandler */
 	virtual void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString &title) override;
 
+	// CefResourceRequestHandler
+	virtual ReturnValue
+	OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+			     CefRefPtr<CefFrame> frame,
+			     CefRefPtr<CefRequest> request,
+			     CefRefPtr<CefCallback> callback) override;
 	/* CefRequestHandler */
 	virtual bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 				    CefRefPtr<CefRequest> request, bool user_gesture, bool is_redirect) override;
 
-	virtual void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-				 CefLoadHandler::ErrorCode errorCode, const CefString &errorText,
+	virtual void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+	virtual void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+	virtual void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser, TerminationStatus
+#if CHROME_VERSION_BUILD >= 6367
+					       ,
+					       int, const CefString &
+#endif
+					       ) override;
+
+	virtual void OnLoadError(CefRefPtr<CefBrowser> browser,
+				 CefRefPtr<CefFrame> frame,
+				 CefLoadHandler::ErrorCode errorCode,
+				 const CefString &errorText,
 				 const CefString &failedUrl) override;
 
 	virtual bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
@@ -59,8 +90,6 @@ public:
 				   const CefPopupFeatures &popupFeatures, CefWindowInfo &windowInfo,
 				   CefRefPtr<CefClient> &client, CefBrowserSettings &settings,
 				   CefRefPtr<CefDictionaryValue> &extra_info, bool *no_javascript_access) override;
-
-	virtual void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
 	/* CefFocusHandler */
 	virtual bool OnSetFocus(CefRefPtr<CefBrowser> browser, CefFocusHandler::FocusSource source) override;
@@ -96,9 +125,22 @@ public:
 				const CefString &default_prompt_text, CefRefPtr<CefJSDialogCallback> callback,
 				bool &suppress_message) override;
 
+	virtual bool
+	OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+				 CefRefPtr<CefFrame> frame,
+				 CefProcessId source_process,
+				 CefRefPtr<CefProcessMessage> message) override;
+
 	QCefWidgetInternal *widget = nullptr;
+	std::string headers;
 	std::string script;
 	bool allowAllPopups;
 
 	IMPLEMENT_REFCOUNTING(QCefBrowserClient);
+
+private:
+	// Handle the browser side of query routing
+	CefRefPtr<CefMessageRouterBrowserSide> message_router_;
+	std::unique_ptr<CefMessageRouterBrowserSide::Handler> message_handler_;
+	int browser_count = 0;
 };

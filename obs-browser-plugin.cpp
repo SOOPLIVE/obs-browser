@@ -59,6 +59,14 @@
 #include "drm-format.hpp"
 #endif
 
+#include "source/soop-source-plugin.h"
+
+#include <QStandardPaths>
+#include <QSettings>
+#include <QFile>
+
+#define SOOP_DEFAULT_URL URL_PREFIX ""
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-browser", "en-US")
 MODULE_EXPORT const char *obs_module_description(void)
@@ -117,12 +125,16 @@ static const char *default_css = "\
 body { \
 background-color: rgba(0, 0, 0, 0); \
 margin: 0px auto; \
-overflow: hidden; \
 }";
+
+
+void InitializeStagingStatus()
+{
+}
 
 static void browser_source_get_defaults(obs_data_t *settings)
 {
-	obs_data_set_default_string(settings, "url", "https://obsproject.com/browser-source");
+	obs_data_set_default_string(settings, "url", "");
 	obs_data_set_default_int(settings, "width", 800);
 	obs_data_set_default_int(settings, "height", 600);
 	obs_data_set_default_int(settings, "fps", 30);
@@ -137,6 +149,13 @@ static void browser_source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "css", default_css);
 	obs_data_set_default_bool(settings, "reroute_audio", false);
 }
+
+#pragma region _SOOP_BROWSER_SOURCE_GET_DEFAULTS
+void soop_browser_source_get_defaults(obs_data_t* settings)
+{
+	browser_source_get_defaults(settings);
+}
+#pragma endregion
 
 static bool is_local_file_modified(obs_properties_t *props, obs_property_t *, obs_data_t *settings)
 {
@@ -264,6 +283,16 @@ static obs_missing_files_t *browser_source_missingfiles(void *data)
 	return files;
 }
 
+bool DeleteFolderWindows(const std::string& path) {
+	std::string pathWithSlash = path + "\\*";
+	SHFILEOPSTRUCTA fileOp = {};
+	fileOp.wFunc = FO_DELETE;
+	fileOp.pFrom = pathWithSlash.c_str();
+	fileOp.fFlags = FOF_NO_UI | FOF_SILENT | FOF_NOCONFIRMATION;
+
+	return SHFileOperationA(&fileOp) == 0;
+}
+
 static CefRefPtr<BrowserApp> app;
 
 static void BrowserInit(void)
@@ -292,6 +321,9 @@ static void BrowserInit(void)
 	settings.windowless_rendering_enabled = true;
 	settings.no_sandbox = true;
 
+	//CefString(&settings.user_agent) = "afreecastudio2 0.0.0.0";
+	//CefString(&settings.user_agent) = "soopstudio 0.0.0";
+
 	uint32_t obs_ver = obs_get_version();
 	uint32_t obs_maj = obs_ver >> 24;
 	uint32_t obs_min = (obs_ver >> 16) & 0xFF;
@@ -304,7 +336,11 @@ static void BrowserInit(void)
 	prod_ver << std::to_string(cef_version_info(4)) << "." << std::to_string(cef_version_info(5)) << "."
 		 << std::to_string(cef_version_info(6)) << "." << std::to_string(cef_version_info(7));
 	prod_ver << " OBS/";
-	prod_ver << std::to_string(obs_maj) << "." << std::to_string(obs_min) << "." << std::to_string(obs_pat);
+	prod_ver << std::to_string(obs_maj) << "." << std::to_string(obs_min)
+		 << "." << std::to_string(obs_pat);
+	prod_ver << " SOOPStudio/";
+	prod_ver << std::to_string(obs_maj) << "." << std::to_string(obs_min)
+		<< "." << std::to_string(obs_pat);
 
 #if CHROME_VERSION_BUILD >= 4472
 	CefString(&settings.user_agent_product) = prod_ver.str();
@@ -337,6 +373,14 @@ static void BrowserInit(void)
 	}
 
 	BPtr<char> conf_path_abs = os_get_abs_path_ptr(conf_path);
+	std::string cache_path = std::string(conf_path_abs.Get()) + "Cache";
+
+#ifdef _WIN32
+	DeleteFolderWindows(cache_path);
+#else
+	//DeleteFolderPosix(cache_path);
+#endif
+
 	CefString(&settings.locale) = obs_get_locale();
 	CefString(&settings.accept_language_list) = accepted_languages;
 #if CHROME_VERSION_BUILD <= 6533
@@ -525,6 +569,20 @@ void RegisterBrowserSource()
 /* ========================================================================= */
 
 extern void DispatchJSEvent(std::string eventName, std::string jsonString, BrowserSource *browser = nullptr);
+
+extern void SetCefBrowserCookies(std::string cookies);
+
+static void handle_soop_frontend_event(enum soop_frontend_type event,
+				       void* data,
+				       void*)
+{
+	if (SOOP_FRONTEND_SET_CEF_COOKIES != event) {
+		return;
+	}
+
+	const char* cookie = (const char*)data;
+	SetCefBrowserCookies(cookie);
+}
 
 static void handle_obs_frontend_event(enum obs_frontend_event event, void *)
 {
@@ -739,6 +797,8 @@ static void check_hwaccel_support(void)
 
 bool obs_module_load(void)
 {
+	InitializeStagingStatus();
+
 #ifdef ENABLE_BROWSER_QT_LOOP
 	qRegisterMetaType<MessageTask>("MessageTask");
 #endif
@@ -765,7 +825,32 @@ bool obs_module_load(void)
 	     cef_version_info(5), cef_version_info(6), cef_version_info(7), CEF_VERSION);
 
 	RegisterBrowserSource();
+	for (int idx = 0; idx < chatSourceCount; idx++) {
+		RegisterChatSource(idx);
+	}
+	RegisterChatScoreSource();
+	RegisterAnimeSubtitleSource();
+	RegisterVideoBalloonSource();
+	RegisterSOOPParticleEffectSource();
+
+	for (int idx = 0; idx < commerce_source_type_count; idx++) {
+		RegisterCommerceSource(idx);
+	}
+	for (int idx = 0; idx < mission_source_type_count; idx++) {
+		RegisterMissionSource(idx);
+	}
+	for (int idx = 0; idx < kboSourceCount; idx++) {
+		RegisterKBOGraphicSource(idx);
+	}
+	for (int idx = 0; idx < footballSourceCount; idx++) {
+		RegisterFootballGraphicSource(idx);
+	}
+
+	RegisterPainterSource();
+
 	obs_frontend_add_event_callback(handle_obs_frontend_event, nullptr);
+
+	soop_frontend_add_callback(handle_soop_frontend_event, nullptr);
 
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 	OBSDataAutoRelease private_data = obs_get_private_data();
@@ -817,6 +902,15 @@ void obs_module_unload(void)
 		manager_thread.join();
 	}
 #endif
+	UnRegisterChatSource();
+	UnRegisterChatScoreSource();
+	UnRegisterAnimeSubtitleSource();
+	UnRegisterVideoBalloonSource();
+	UnRegisterKBOGraphicSource();
+	UnRegisterFootballGraphicSource();
+	UnRegisterCommerceSource();
+	UnRegisterSOOPParticleEffectSource();
+	UnRegisterPainterSource();
 
 	os_event_destroy(cef_started_event);
 }

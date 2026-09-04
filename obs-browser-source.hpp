@@ -38,7 +38,7 @@ struct AudioStream {
 	int channels;
 	int sample_rate;
 };
-#endif
+#endif // CHROME_VERSION_BUILD < 4103
 
 enum class ControlLevel : int {
 	None,
@@ -51,8 +51,81 @@ enum class ControlLevel : int {
 inline constexpr ControlLevel DEFAULT_CONTROL_LEVEL = ControlLevel::ReadObs;
 
 extern bool hwaccel;
+extern std::string browser_cookie;
 
-struct BrowserSource {
+extern void SetBrowserCookie(std::string cookie);
+extern std::string GetBrowserCookie();
+
+// aqua style
+struct StyleItem {
+	std::string name;
+	std::string key;
+};
+typedef std::vector<StyleItem> StyleList;
+struct ScoreInfo {
+	std::string style_name;
+	int styleIdx = 0;
+	int transparency = 0;
+	int thema = 1;
+	std::string left_name;
+	std::string right_name;
+	int left_score = 0;
+	int right_score = 0;
+	bool use_set = true;
+	int left_set = 0;
+	int right_set = 0;
+	bool use_timer = true;
+};
+
+struct MissionInfo {
+	std::string theme = "default";
+	std::string sort_type = "regDate";
+	bool only_progress_flag = true;
+	int transparency = 100;
+	int volume = 100;
+	bool mute = false;
+};
+
+struct AnimeSubtitleInfo {
+	std::string style_name;
+	int style_idx = 0;
+	std::string lang_type;
+
+	int transparency = 0;
+	bool display_quickmenu = false;
+	bool display_background = false;
+	std::string background_color;
+	int background_transparency = 100;
+
+	std::string font_background_color;
+	std::string font_color;
+	std::string font_face;
+	int	    font_size = 54;
+	bool	    font_bold;
+	int	    font_transparency;
+	bool	    font_outline_display;
+	std::string font_outline_color;
+	int	    font_outline_size;
+	int	    font_align_type;
+
+	bool	    use_animation;
+	int	    animation_speed;
+
+	std::string subtitle_text;
+	int	    subtitle_theme;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+class IMessageHandler {
+public:
+	explicit IMessageHandler() {}
+	virtual ~IMessageHandler() {}
+	//
+	virtual int CefQuery(std::string utf8data,
+                std::string &resultdata) = 0;
+};
+//
+struct BrowserSource : public IMessageHandler {
 	BrowserSource **p_prev_next = nullptr;
 	BrowserSource *next = nullptr;
 
@@ -63,7 +136,13 @@ struct BrowserSource {
 	std::recursive_mutex lockBrowser;
 	CefRefPtr<CefBrowser> cefBrowser;
 
+	std::string id;
+	std::string type;
+	std::string kbo_type;
+	std::string football_type;
+
 	std::string url;
+	std::string style;
 	std::string css;
 	gs_texture_t *texture = nullptr;
 	gs_texture_t *extra_texture = nullptr;
@@ -71,11 +150,29 @@ struct BrowserSource {
 	uint32_t last_cy = 0;
 	gs_color_format last_format = GS_UNKNOWN;
 
+	gs_texture_t* popup_texture = nullptr;
+	gs_texture_t* popup_extra_texture = nullptr;
+	uint32_t popup_last_cx = 0;
+	uint32_t popup_last_cy = 0;
+	gs_color_format popup_last_format = GS_UNKNOWN;
+
+	// aqua style
+	StyleList style_list;
+	ScoreInfo score_info;
+	MissionInfo mission_info;
+	AnimeSubtitleInfo anime_subtitle_info;
+
+	int style_index;	// use animation subtitle
+
+	std::string script;
+
 #ifdef ENABLE_BROWSER_SHARED_TEXTURE
 #ifdef _WIN32
 	void *last_handle = INVALID_HANDLE_VALUE;
+	void *popup_last_handle = INVALID_HANDLE_VALUE;
 #elif defined(__APPLE__)
 	void *last_handle = nullptr;
+	void *popup_last_handle = nullptr;
 #endif
 #endif
 
@@ -88,13 +185,18 @@ struct BrowserSource {
 	bool shutdown_on_invisible = false;
 	bool is_local = false;
 	bool first_update = true;
-	bool reroute_audio = true;
+	bool reroute_audio = false;
 	std::atomic<bool> destroying = false;
 	ControlLevel webpage_control_level = DEFAULT_CONTROL_LEVEL;
 #if defined(BROWSER_EXTERNAL_BEGIN_FRAME_ENABLED) && defined(ENABLE_BROWSER_SHARED_TEXTURE)
 	bool reset_frame = false;
 #endif
 	bool is_showing = false;
+
+	CefRect popup_rect;
+	int popup_width = 0;
+	int popup_height = 0;
+	bool is_showing_popup = false;
 
 	inline void DestroyTextures()
 	{
@@ -109,6 +211,23 @@ struct BrowserSource {
 		if (texture) {
 			gs_texture_destroy(texture);
 			texture = nullptr;
+		}
+		obs_leave_graphics();
+	}
+
+	inline void DestroyPopupTextures()
+	{
+		obs_enter_graphics();
+		if (popup_extra_texture) {
+			gs_texture_destroy(popup_extra_texture);
+			popup_extra_texture = nullptr;
+			popup_last_cx = 0;
+			popup_last_cy = 0;
+			popup_last_format = GS_UNKNOWN;
+		}
+		if (popup_texture) {
+			gs_texture_destroy(popup_texture);
+			popup_texture = nullptr;
 		}
 		obs_leave_graphics();
 	}
@@ -146,10 +265,40 @@ struct BrowserSource {
 	void SetActive(bool active);
 	void Refresh();
 
+	void ExcuteJavaScript(const std::string& script);
+	
 #if defined(BROWSER_EXTERNAL_BEGIN_FRAME_ENABLED) && defined(ENABLE_BROWSER_SHARED_TEXTURE)
 	inline void SignalBeginFrame();
 #endif
 
 	void SetBrowser(CefRefPtr<CefBrowser> b);
 	CefRefPtr<CefBrowser> GetBrowser();
+
+	void SetCookies(std::string _cookies) {
+        UNUSED_PARAMETER(_cookies);
+	}
+
+	// cefQuery
+	virtual int CefQuery(std::string utf8data, std::string &resultdata);
+
+	// aqua-source
+	void UpdateChatSource(obs_data_t *settings = nullptr);
+	void UpdateChatScoreSource(obs_data_t *settings = nullptr);
+	void UpdateAnimeSubtitleSource(obs_data_t* settings = nullptr);
+	// video balloon
+	void UpdateVideoBalloonSource(obs_data_t *settings = nullptr);
+	// kbo graphic
+	void UpdateKBOGraphicSource(obs_data_t *settings = nullptr);
+	// Football graphic
+	void UpdateFootballGraphicSource(obs_data_t *settings = nullptr);
+	// commerce
+	void UpdateCommerceSource(obs_data_t *settings = nullptr);
+	// mission
+	void UpdateMissionSource(obs_data_t *settings = nullptr);
+	// chat mood check
+	void UpdateChatMoodCheckSource(obs_data_t *settings = nullptr);
+
+	void UpdateAIManagerSource(obs_data_t *settings = nullptr);
+
+	void UpdatePainterSource(obs_data_t* settings = nullptr);
 };

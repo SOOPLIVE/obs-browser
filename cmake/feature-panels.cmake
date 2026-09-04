@@ -9,11 +9,10 @@ target_include_directories(browser-panels INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}
 
 target_compile_definitions(browser-panels INTERFACE BROWSER_AVAILABLE)
 
-target_sources(
-  obs-browser
-  PRIVATE # cmake-format: sortable
-          panel/browser-panel-client.cpp panel/browser-panel-client.hpp panel/browser-panel-internal.hpp
-          panel/browser-panel.cpp)
+target_sources(obs-browser PRIVATE panel/browser-panel-client.hpp panel/browser-panel-internal.hpp
+                                   panel/browser-panel.cpp panel/browser-panel-client.cpp
+                                   panel/browser-osr-panel-client.hpp panel/browser-osr-panel-client.cpp
+                                   panel/QCefQuery.hpp panel/QCefQueryHandler.hpp panel/QCefQueryHandler.cpp)
 
 target_link_libraries(obs-browser PRIVATE OBS::browser-panels Qt::Widgets)
 

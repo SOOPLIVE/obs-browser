@@ -48,6 +48,8 @@ extern bool QueueCEFTask(std::function<void()> task);
 static mutex browser_list_mutex;
 static BrowserSource *first_browser = nullptr;
 
+std::string browser_cookie = "";
+
 static void SendBrowserVisibility(CefRefPtr<CefBrowser> browser, bool isVisible)
 {
 	if (!browser)
@@ -248,8 +250,15 @@ bool BrowserSource::CreateBrowser()
 
 		SetBrowser(browser);
 
-		if (reroute_audio)
+		if (reroute_audio) {
 			cefBrowser->GetHost()->SetAudioMuted(true);
+		}
+		else {
+			bool source_active = obs_source_active(source);
+			if(!source_active)
+				cefBrowser->GetHost()->SetAudioMuted(true);
+		}
+
 		if (obs_source_showing(source))
 			is_showing = true;
 
@@ -338,16 +347,117 @@ void BrowserSource::SendFocus(bool focus)
 		true);
 }
 
+#ifdef _WIN32
+
+int IsKeyDown(int key)
+{
+	return ((GetAsyncKeyState(key) & 0x8000) != 0);
+}
+
+int GetCefKeyboardModifiers(WPARAM wparam, LPARAM lparam)
+{
+
+	int modifiers = 0;
+	if (IsKeyDown(VK_SHIFT))
+		modifiers |= EVENTFLAG_SHIFT_DOWN;
+	if (IsKeyDown(VK_CONTROL))
+		modifiers |= EVENTFLAG_CONTROL_DOWN;
+	if (IsKeyDown(VK_MENU))
+		modifiers |= EVENTFLAG_ALT_DOWN;
+
+	// Low bit set from GetKeyState indicates "toggled".
+	if (::GetKeyState(VK_NUMLOCK) & 1)
+		modifiers |= EVENTFLAG_NUM_LOCK_ON;
+	if (::GetKeyState(VK_CAPITAL) & 1)
+		modifiers |= EVENTFLAG_CAPS_LOCK_ON;
+
+	switch (wparam)
+	{
+	case VK_RETURN:
+		if ((lparam >> 16) & KF_EXTENDED)
+			modifiers |= EVENTFLAG_IS_KEY_PAD;
+		break;
+	case VK_INSERT:
+	case VK_DELETE:
+	case VK_HOME:
+	case VK_END:
+	case VK_PRIOR:
+	case VK_NEXT:
+	case VK_UP:
+	case VK_DOWN:
+	case VK_LEFT:
+	case VK_RIGHT:
+		if (!((lparam >> 16) & KF_EXTENDED))
+			modifiers |= EVENTFLAG_IS_KEY_PAD;
+		break;
+	case VK_NUMLOCK:
+	case VK_NUMPAD0:
+	case VK_NUMPAD1:
+	case VK_NUMPAD2:
+	case VK_NUMPAD3:
+	case VK_NUMPAD4:
+	case VK_NUMPAD5:
+	case VK_NUMPAD6:
+	case VK_NUMPAD7:
+	case VK_NUMPAD8:
+	case VK_NUMPAD9:
+	case VK_DIVIDE:
+	case VK_MULTIPLY:
+	case VK_SUBTRACT:
+	case VK_ADD:
+	case VK_DECIMAL:
+	case VK_CLEAR:
+		modifiers |= EVENTFLAG_IS_KEY_PAD;
+		break;
+	case VK_SHIFT:
+		if (IsKeyDown(VK_LSHIFT))
+			modifiers |= EVENTFLAG_IS_LEFT;
+		else if (IsKeyDown(VK_RSHIFT))
+			modifiers |= EVENTFLAG_IS_RIGHT;
+		break;
+	case VK_CONTROL:
+		if (IsKeyDown(VK_LCONTROL))
+			modifiers |= EVENTFLAG_IS_LEFT;
+		else if (IsKeyDown(VK_RCONTROL))
+			modifiers |= EVENTFLAG_IS_RIGHT;
+		break;
+	case VK_MENU:
+		if (IsKeyDown(VK_LMENU))
+			modifiers |= EVENTFLAG_IS_LEFT;
+		else if (IsKeyDown(VK_RMENU))
+			modifiers |= EVENTFLAG_IS_RIGHT;
+		break;
+	case VK_LWIN:
+		modifiers |= EVENTFLAG_IS_LEFT;
+		break;
+	case VK_RWIN:
+		modifiers |= EVENTFLAG_IS_RIGHT;
+		break;
+	}
+	return modifiers;
+}
+
+#endif
+
 void BrowserSource::SendKeyClick(const struct obs_key_event *event, bool key_up)
 {
 	if (destroying)
 		return;
 
+#ifndef _WIN32
 	std::string text = event->text;
+#endif
+
 #ifdef __linux__
 	uint32_t native_vkey = KeyboardCodeFromXKeysym(event->native_vkey);
 	uint32_t modifiers = event->native_modifiers;
-#elif defined(_WIN32) || defined(__APPLE__)
+#elif defined(_WIN32)
+	// Convert obs_key_event to WINAPI Message Param and match it.
+
+	WPARAM wParam = event->native_vkey;
+	LPARAM lParam = event->native_scancode;
+	uint32_t uMsg = event->native_modifiers;
+#elif defined(__APPLE__)
 	uint32_t native_vkey = event->native_vkey;
 	uint32_t modifiers = event->modifiers;
 #else
@@ -359,11 +469,30 @@ void BrowserSource::SendKeyClick(const struct obs_key_event *event, bool key_up)
 	ExecuteOnBrowser(
 		[=](CefRefPtr<CefBrowser> cefBrowser) {
 			CefKeyEvent e;
-			e.windows_key_code = native_vkey;
-#ifdef __APPLE__
+#ifdef _WIN32
+			e.windows_key_code = wParam;
+#elif __APPLE__
 			e.native_key_code = native_vkey;
+#else
+			e.windows_key_code = native_vkey;
 #endif
 
+
+#ifdef _WIN32
+			if (uMsg == WM_KEYDOWN || uMsg == WM_SYSKEYDOWN)
+				e.type = KEYEVENT_RAWKEYDOWN;
+			else if (uMsg == WM_KEYUP || uMsg == WM_SYSKEYUP)
+				e.type = KEYEVENT_KEYUP;
+			else
+				e.type = KEYEVENT_CHAR;
+
+			e.is_system_key = uMsg == WM_SYSCHAR ||
+					  uMsg == WM_SYSKEYDOWN ||
+					  uMsg == WM_SYSKEYUP;;
+			e.native_key_code = lParam;
+			e.modifiers = GetCefKeyboardModifiers(wParam,lParam);
+
+#else
 			e.type = key_up ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN;
 
 			if (!text.empty()) {
@@ -371,11 +500,14 @@ void BrowserSource::SendKeyClick(const struct obs_key_event *event, bool key_up)
 				if (wide.size())
 					e.character = wide[0];
 			}
-
 			//e.native_key_code = native_vkey;
 			e.modifiers = modifiers;
 
+#endif
+
 			cefBrowser->GetHost()->SendKeyEvent(e);
+
+#ifndef _WIN32
 			if (!text.empty() && !key_up) {
 				e.type = KEYEVENT_CHAR;
 #ifdef __linux__
@@ -387,6 +519,7 @@ void BrowserSource::SendKeyClick(const struct obs_key_event *event, bool key_up)
 #endif
 				cefBrowser->GetHost()->SendKeyEvent(e);
 			}
+#endif
 		},
 		true);
 }
@@ -445,6 +578,8 @@ void BrowserSource::SetActive(bool active)
 			CefRefPtr<CefListValue> args = msg->GetArgumentList();
 			args->SetBool(0, active);
 			SendBrowserProcessMessage(cefBrowser, PID_RENDERER, msg);
+
+			cefBrowser->GetHost()->SetAudioMuted(!active);
 		},
 		true);
 	nlohmann::json json;
@@ -454,7 +589,19 @@ void BrowserSource::SetActive(bool active)
 
 void BrowserSource::Refresh()
 {
-	ExecuteOnBrowser([](CefRefPtr<CefBrowser> cefBrowser) { cefBrowser->ReloadIgnoreCache(); }, true);
+	ExecuteOnBrowser([](CefRefPtr<CefBrowser> cefBrowser) {
+		cefBrowser->ReloadIgnoreCache();
+		}, true);
+}
+
+void BrowserSource::ExcuteJavaScript(const std::string& script)
+{
+	if (!cefBrowser)
+		return;
+
+	CefRefPtr<CefFrame> frame = cefBrowser->GetMainFrame();
+	std::string url = frame->GetURL();
+	frame->ExecuteJavaScript(script, url, 0);
 }
 
 void BrowserSource::SetBrowser(CefRefPtr<CefBrowser> b)
@@ -668,6 +815,39 @@ void BrowserSource::Render()
 		while (gs_effect_loop(effect, tech))
 			gs_draw_sprite(draw_texture, flip_flag, 0, 0);
 
+		if (is_showing_popup && popup_texture) {
+
+			gs_matrix_push();
+			gs_matrix_translate3f((float)popup_rect.x, (float)popup_rect.y, 0.0f);
+
+			bool linear_popup_sample = popup_extra_texture == NULL;
+			gs_texture_t* draw_popup_texture = popup_texture;
+			if (!linear_popup_sample && !obs_source_get_texcoords_centered(source)) {
+				gs_copy_texture(popup_extra_texture, popup_texture);
+				draw_popup_texture = popup_extra_texture;
+				linear_popup_sample = true;
+			}
+
+			const char* popup_tech = "Draw";
+
+			if (linear_popup_sample) {
+				gs_effect_set_texture_srgb(image, draw_popup_texture);
+			} else {
+				gs_effect_set_texture(image, draw_popup_texture);
+				popup_tech = "DrawSrgbDecompress";
+			}
+
+			while (gs_effect_loop(effect, popup_tech)) {
+				gs_draw_sprite(
+					draw_popup_texture, 0,
+					popup_rect.width,
+					popup_rect.height
+				);
+			}
+
+			gs_matrix_pop();
+		}
+
 		gs_blend_state_pop();
 
 		gs_enable_framebuffer_srgb(previous);
@@ -717,4 +897,36 @@ void DispatchJSEvent(std::string eventName, std::string jsonString, BrowserSourc
 		ExecuteOnAllBrowsers(jsEvent);
 	else
 		ExecuteOnBrowser(jsEvent, browser);
+}
+
+// cefQuery
+int BrowserSource::CefQuery(std::string utf8data, std::string &resultdata)
+{
+    UNUSED_PARAMETER(utf8data);
+    UNUSED_PARAMETER(resultdata);
+
+	return 0;
+}
+
+void SetCefBrowserCookies(std::string cookies)
+{
+	lock_guard<mutex> lock(browser_list_mutex);
+
+	browser_cookie = cookies;
+
+	BrowserSource* bs = first_browser;
+	while (bs) {
+		BrowserSource* bsw = reinterpret_cast<BrowserSource*>(bs);
+		bsw->SetCookies(browser_cookie);
+		bs = bs->next;
+	}
+}
+
+void SetBrowserCookie(std::string cookie)
+{
+	browser_cookie = cookie;
+}
+std::string GetBrowserCookie()
+{
+	return browser_cookie;
 }

@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <functional>
 #include "cef-headers.hpp"
+#include "include/wrapper/cef_message_router.h"
 
 typedef std::function<void(CefRefPtr<CefBrowser>)> BrowserFunc;
 
@@ -91,12 +92,22 @@ public:
 						   CefRefPtr<CefCommandLine> command_line) override;
 	virtual void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
 				      CefRefPtr<CefV8Context> context) override;
-	virtual bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
-					      CefProcessId source_process,
-					      CefRefPtr<CefProcessMessage> message) override;
-	virtual bool Execute(const CefString &name, CefRefPtr<CefV8Value> object, const CefV8ValueList &arguments,
-			     CefRefPtr<CefV8Value> &retval, CefString &exception) override;
+	virtual void OnContextReleased(CefRefPtr<CefBrowser> browser,
+				       CefRefPtr<CefFrame> frame,
+				       CefRefPtr<CefV8Context> context) override;
+	virtual bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+				 CefRefPtr<CefFrame> frame,
+				 CefProcessId source_process,
+				 CefRefPtr<CefProcessMessage> message) override;
+	virtual bool Execute(const CefString &name,
+			     CefRefPtr<CefV8Value> object,
+			     const CefV8ValueList &arguments,
+			     CefRefPtr<CefV8Value> &retval,
+			     CefString &exception) override;
+               
+	virtual void OnWebKitInitialized() override;
 
+               
 #ifdef ENABLE_BROWSER_QT_LOOP
 #if CHROME_VERSION_BUILD < 5938
 	virtual void OnScheduleMessagePumpWork(int64 delay_ms) override;
@@ -114,4 +125,8 @@ public:
 #endif
 
 	IMPLEMENT_REFCOUNTING(BrowserApp);
+
+private:
+	// Handles the renderer side of query routing.
+	CefRefPtr<CefMessageRouterRendererSide> message_router_;
 };
