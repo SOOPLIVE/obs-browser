@@ -79,6 +79,8 @@ signals:
 	void cefLoadEnd();
 	void cefBeforePopup(const QString &url);
 
+	void cefRenderProcessTerminate(const QString& url, int terminateStatus);
+
 };
 
 /* ------------------------------------------------------------------------- */

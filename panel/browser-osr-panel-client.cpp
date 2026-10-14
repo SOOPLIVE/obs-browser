@@ -298,13 +298,19 @@ void QCefOsrBrowserClient::OnBeforeClose(CefRefPtr<CefBrowser>)
 
 }
 void QCefOsrBrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
-						     TerminationStatus
+						     TerminationStatus status
 #if CHROME_VERSION_BUILD >= 6367
 						     ,
 						     int, const CefString &
 #endif
 )
-{   
+{
+	std::string url = browser->GetMainFrame()->GetURL().ToString();;
+
+	if (widget) {
+		emit widget->cefRenderProcessTerminate(url.c_str(), status);
+	}
+
 	if (message_router_) {
 		message_router_->OnRenderProcessTerminated(browser);
 	}
