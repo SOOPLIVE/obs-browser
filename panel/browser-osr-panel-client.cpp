@@ -301,14 +301,27 @@ void QCefOsrBrowserClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser> brows
 						     TerminationStatus status
 #if CHROME_VERSION_BUILD >= 6367
 						     ,
-						     int, const CefString &
+						     int error_code,
+						     const CefString& error_string
 #endif
 )
 {
 	std::string url = browser->GetMainFrame()->GetURL().ToString();;
 
 	if (widget) {
-		emit widget->cefRenderProcessTerminate(url.c_str(), status);
+#if CHROME_VERSION_BUILD >= 6367
+		emit widget->cefRenderProcessTerminate(
+			url.c_str(),
+			static_cast<int>(status),
+			error_code,
+			QString::fromStdString(error_string.ToString()));
+#else
+		emit widget->cefRenderProcessTerminate(
+			url.c_str(),
+			static_cast<int>(status),
+			0,
+			QString());
+#endif
 	}
 
 	if (message_router_) {

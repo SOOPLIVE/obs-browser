@@ -148,6 +148,19 @@ static void browser_source_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "webpage_control_level", (int)DEFAULT_CONTROL_LEVEL);
 	obs_data_set_default_string(settings, "css", default_css);
 	obs_data_set_default_bool(settings, "reroute_audio", false);
+
+#pragma region _SOOP_BROWSER_SOURCE_REROUTE_AUDIO
+	bool reroute_audio = true;
+	for (uint32_t i = 1; i < 3; i++) {
+		obs_source_t* source = obs_get_output_source(i);
+		if (source) {
+			reroute_audio = false;
+			obs_source_release(source);
+		}
+	}
+
+	obs_data_set_default_bool(settings, "reroute_audio", reroute_audio);
+#pragma endregion
 }
 
 #pragma region _SOOP_BROWSER_SOURCE_GET_DEFAULTS

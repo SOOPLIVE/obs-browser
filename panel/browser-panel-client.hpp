@@ -65,7 +65,8 @@ public:
 	virtual void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser, TerminationStatus
 #if CHROME_VERSION_BUILD >= 6367
 					       ,
-					       int, const CefString &
+					       int error_code,
+					       const CefString& error_string
 #endif
 					       ) override;
 
